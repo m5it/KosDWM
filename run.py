@@ -2,119 +2,207 @@ import tkinter as tk
 from tkinter import ttk
 import screeninfo
 import subprocess
-import re,zlib
-
+import threading
+from datetime import datetime
+import atexit
+import traceback
+import re,time,sys
+from src.functions import *
 #--
 #
-def crc32b(text):
-	return "%x"%(zlib.crc32(text.encode("utf-8")) & 0xFFFFFFFF)
-
+kosdwm  = None
+VERSION = "0.1b"
 #--
 #
-class WindowManager:
+#
+def cleanup():
+	print("cleanup() START")
+	kos.wmctrltray.on_close()
+	return True
+#
+def handle_exception(exc_type, exc_value, exc_traceback):
+	if issubclass(exc_type, KeyboardInterrupt):
+		# Let KeyboardInterrupt propagate
+		print("Exception: Keyboard Interrupt: {}".format(exc_type),{'verbose':True})
+		return
+	# Extract traceback info
+	tb = traceback.extract_tb(exc_traceback)
+	# Get the last frame (most recent error)
+	frame = tb[-1]
+	filename, line, func, text = frame
+	print(f"Exception: {exc_type.__name__}: {exc_value} (line {line} in {filename})",{'verbose':True,})
+	# Optionally print full traceback
+	traceback.print_exception(exc_type, exc_value, exc_traceback)
+#
+atexit.register(cleanup)
+sys.excepthook = handle_exception
+#--
+#
+class WMCtrlTray:
 	def __init__(self, root):
-		self.windows = {} #w0={id=0,name='',host='',hash='crc32b'}
-		self.root = root
-		#self.root.title("Window Menu")
-		#self.root.geometry("400x300")  # Initial size, will be adjusted
+		self.windows      = {}   # w0={id=0,name='',host='',class='',hash='crc32b'}
+		self.lines        = []   # wmctrl output
+		self.windows_hash = None # concat all lines of wmctrl -l into one and create crc32b
+		self.stop_thread  = False
+		self.root         = root
 		# Get the primary monitor's dimensions
 		self.screen = screeninfo.get_monitors()[0]
 		screen_width = self.screen.width
 		screen_height = self.screen.height
 		# Set the window to span the full width of the screen at the top
-		self.root.geometry(f"{screen_width}x50+0+0")
+		self.root.geometry(f"{screen_width}x25+0+0")
 		# Remove the title bar and window decorations
 		self.root.overrideredirect(True)
 		# Make the window stay on top of other windows
 		self.root.attributes("-topmost", True)
-		# Create a frame to act as the title bar
-		self.title_bar = tk.Frame(self.root, bg='gray', relief='raised', bd=1)
+		#
+		#
+		def test_new_file():
+			print("test new file!")
+		#menu_bar = tk.Menu(self.root,tearoff=0)
+		#file_menu = tk.Menu(menu_bar, tearoff=0)
+		#file_menu.add_command(label="New", command=test_new_file)
+		#menu_bar.add_cascade(label="Test",menu=file_menu)
+		#self.root.config(menu=menu_bar)
+		
+		self.title_bar = tk.Frame(self.root, bg='gray', height=30,relief='raised',bd=1)
+		#self.title_bar.pack(fill=tk.X, padx=(20,self.screen.width/2), pady=(0,0), ipady=5, side=tk.TOP)
 		self.title_bar.pack(fill=tk.X)
-		# Add a close button to the title bar
-		# self.close_button = tk.Button(
-			# self.title_bar,
-			# text='X',
-			# command=self.root.destroy,
-			# bg='gray',
-			# fg='black',
-			# bd=0,
-			# relief='flat',
-			# padx=(self.screen.width-20,0),
-			# pady=(5)
-		# )
-		# self.close_button.pack(side=tk.RIGHT)
 		# Make the window draggable by the title bar
 		self.title_bar.bind("<ButtonPress-1>", self.start_move)
 		self.title_bar.bind("<B1-Motion>", self.on_motion)
 		# Store the position where the mouse was clicked
 		self._drag_data = {"x": 0, "y": 0, "drag": False}
-		# Rest of your initialization code...
+		
+		# test another window
+		def test():
+			r1 = tk.Toplevel(self.root)
+			r1.title("World")
+			r1.geometry("300x200")
+			#menu_bar = tk.Menu(r1)
+			#file_menu = tk.Menu(r1, tearoff=0)
+			#file_menu.add_command(label="New", command=test_new_file)
+			#menu_bar.add_cascade(label="Test",menu=file_menu)
+			#r1.config(menu=menu_bar)
+		#self.root.after_idle(test)
+		#
 		self.create_widgets()
 	#
-	def create_widgets(self):
-		"""Create the widgets for the window list"""
-		# Create a frame for the window list
-		self.window_frame = tk.Frame(self.root)
-		self.window_frame.pack(fill=tk.BOTH, expand=True)
- 
-		# Create a label
-		#label = tk.Label(self.window_frame, text="Select a window:")
-		#label.pack(pady=5)
- 
-		# Create a Combobox for window selection
-		self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly")
-		#self.window_combobox.pack(fill=tk.X, padx=10, pady=5)
-		self.window_combobox.pack(fill=tk.X, padx=(20,self.screen.width/2), pady=(0,20))
- 
-		# Bind the selection event
-		self.window_combobox.bind("<<ComboboxSelected>>", self.on_window_selected)
- 
-		# Create a button to refresh the window list
-		refresh_button = tk.Button(
-			self.window_frame,
-			text="Refresh",
-			command=self.update_window_list
-		)
-		refresh_button.pack(pady=5)
- 
-		# Update the window list
-		self.update_window_list()
-	
+	def start_observer_thread(self):
+		"""Start a thread to observe changes in window list"""
+		observer_thread = threading.Thread(target=self.observer_loop)
+		observer_thread.daemon = True
+		observer_thread.start()
+	#
+	def observer_loop(self):
+		"""Main loop for observing changes in window list"""
+		#last_windows = set()
+		#
+		while not self.stop_thread:
+			try:
+				self.lines = []
+				#
+				# xprop -root _NET_ACTIVE_WINDOW | awk '{print $5}'
+				result = subprocess.run(
+					["xprop", "-root", "_NET_ACTIVE_WINDOW"],
+					capture_output=True,
+					text=True,
+					check=True
+				)
+				print("active window by xprop: ",result.stdout.split(" ")[4])
+				#    0 - 9
+				#    ID       X PROC   TOP  LEFT WIDTH HEIGHT CLASS             HOST      PROG_INFO
+				# 0x0080000e  0 4026   468  341  898  446  xterm.UXTerm          kosgen0 t3ch@kosgen2: ~/sdb1/t3ch
+				# 0x0140000a  0 11288  280  93   1086 692  geany.Geany           kosgen0 *run.py - /home/t3ch/Working/Hobies/OpenBox/WindowsMenu - Geany
+				result = subprocess.run(
+					["wmctrl", "-lpGuFxS"],
+					capture_output=True,
+					text=True,
+					check=True
+				)
+				#
+				for line in result.stdout.splitlines():
+					line = re.sub(r'\s+',' ',line)
+					#print("debug line: ",line)
+					self.lines.append(line)
+				#
+				windows_hash = crc32b( "".join(self.lines) )
+				#
+				if self.windows_hash!=None and self.windows_hash==windows_hash:
+					print("Skipping update windows, windows_hash: {} vs {}".format( self.windows_hash, windows_hash ))
+				else:
+					print("Updating windows list, windows_hash {} vs {}".format( self.windows_hash, windows_hash ))
+					self.root.after(0, self.update_window_list)
+					self.windows_hash = windows_hash
+				time.sleep(10)  # Check every second/s
+			except subprocess.CalledProcessError as e:
+				print(f"Error running wmctrl: {e}")
+				time.sleep(5)  # Wait longer if there's an error
+			except Exception as e:
+				print(f"Unexpected error: {e}")
+				time.sleep(5)  # Wait longer if there's an unexpected error
 	#
 	def update_window_list(self):
 		"""Update the dropdown menu with the current window list"""
+		print("update_window_list() START lines.len: {}, hash: {}".format( len(self.lines), self.windows_hash ))
+		#
+		def shorten_hex(hex_value):
+			"""Convert a hexadecimal value to its shortest representation."""
+			print(f"shorten_hex called with: {hex_value!r} (type: {type(hex_value)})")  # Debug line
+			# Handle string inputs
+			if isinstance(hex_value, str):
+				# Remove '0x' prefix if present
+				if hex_value.startswith('0x'):
+					hex_value = hex_value[2:]
+				# Convert to integer
+				try:
+					hex_value = int(hex_value, 16)
+				except ValueError:
+					raise ValueError(f"Input string '{hex_value}' must be a valid hexadecimal number")
+			# Convert to hex string and remove leading zeros
+			hex_str = hex(hex_value)
+			return '0x' + hex_str[2:].lstrip('0') or '0x0'
+		#
 		try:
 			#
-			# self.windows = {} #w0={id=0,name='',host='',hash='crc32b'}
-			windows=[]
+			# self.windows = {} # w0={id=0,name='',host='',hash='crc32b'}
+			windows      = []
+			lines        = []
+			windows_hash = None
+			self.windows = {}
 			cnt=0
+			#    0 - 9
+			#    ID       X PID   LEFT  TOP WIDTH HEIGHT CLASS             HOST      PROG_INFO
+			# 0x0080000e  0 4026   468  341  898  446  xterm.UXTerm          kosgen0 t3ch@kosgen2: ~/sdb1/t3ch
+			# 0x0140000a  0 11288  280  93   1086 692  geany.Geany           kosgen0 *run.py - /home/t3ch/Working/Hobies/OpenBox/WindowsMenu - Geany
 			#
-			result = subprocess.run(
-				["wmctrl", "-l"],
-				capture_output=True,
-				text=True,
-				check=True
-			)
-			#
-			for line in result.stdout.splitlines():
-				print("debug line: ",line)
-				a = line.split(" ",4)
+			for line in reversed(self.lines):
+				a = line.split(" ",9)
 				print("a: ",a)
-				print("appending: ",a[4])
-				windows.append(a[4]) # prepare graphics dropdown with names only
+				side_number = 1
+				if int(a[3])>=self.screen.width:
+					side_number = 2
+				windows.append("{} ) {}".format(side_number, a[9])) # prepare graphics dropdown with names only
+				print("{} debug line: {}".format( self.screen.width, line ))
+				fid = shorten_hex(a[0])
 				# save object so later is possible to access by selected item id
-				wid="w{}".format(cnt)
+				crc = crc32b( line )
+				wid = "w{}".format(cnt)
 				if wid in self.windows:
 					#
-					self.windows[wid]["id"]   = a[0]
-					self.windows[wid]["host"] = a[3]
-					self.windows[wid]["name"] = a[4]
+					self.windows[wid]["id"]    = a[0]
+					self.windows[wid]["fid"]   = fid
+					self.windows[wid]["pid"]   = a[2]
+					self.windows[wid]["class"] = a[7]
+					self.windows[wid]["host"]  = a[8]
+					self.windows[wid]["name"]  = a[9]
+					self.windows[wid]["hash"]  = crc
 				else:
 					#
-					self.windows[wid] = {"id":a[0],"host":a[3],"name":a[4],}
+					self.windows[wid] = {"id":a[0],"pid":a[2],"fid":fid,"class":a[7],"host":a[8],"name":a[9],}
 				cnt+=1
-			# Extract just the window names (remove the leading window ID)
-			# windows = [line.split(" ", 1)[1].strip() for line in result.stdout.splitlines() if line]
+				print("wid: {}".format( self.windows[wid] ))
+			#
 			self.window_combobox['values'] = windows
 			if windows:
 				self.window_combobox.current(0)
@@ -123,22 +211,89 @@ class WindowManager:
 			self.window_combobox['values'] = ["Error getting window list"]
 		except FileNotFoundError:
 			self.window_combobox['values'] = ["wmctrl not found"]
+		return True
+	#
+	def start_time_thread(self):
+		"""Start a thread to update the time display"""
+		time_thread = threading.Thread(target=self.time_update_loop)
+		time_thread.daemon = True
+		time_thread.start()
+	#
+	def time_update_loop(self):
+		"""Main loop for updating the time display"""
+		while not self.stop_thread:
+			try:
+				# Update the time display on the main thread
+				self.root.after(0, self.update_time_display)
+				time.sleep(1)  # Update every second
+			except Exception as e:
+				print(f"Error in time update loop: {e}")
+				time.sleep(5)  # Wait longer if there's an error
+	#
+	def update_time_display(self):
+		"""Update the time and date display"""
+		now = datetime.now()
+		time_str = now.strftime("%H:%M:%S")
+		date_str = "{} |".format(now.strftime("%Y-%m-%d"))
+		# Update the time label if it exists
+		if hasattr(self, 'time_label'):
+			self.time_label.config(text=time_str)
+		else:
+			# Create the time label if it doesn't exist
+			self.time_label = tk.Label(
+				#self.title_bar,
+				self.time_frame,
+				text=time_str,
+				bg='gray',
+				fg='white',
+				font=('Arial', 10)
+			)
+			self.time_label.pack(side=tk.RIGHT, padx=0,pady=0,ipady=0)
+ 
+		# Update the date label if it exists
+		if hasattr(self, 'date_label'):
+			self.date_label.config(text=date_str)
+		else:
+			# Create the date label if it doesn't exist
+			self.date_label = tk.Label(
+				#self.title_bar,
+				self.time_frame,
+				text=date_str,
+				bg='gray',
+				fg='white',
+				font=('Arial', 10)
+			)
+			self.date_label.pack(side=tk.RIGHT, padx=0,pady=0,ipady=0)
+	#
+	def create_widgets(self):
+		"""Create the widgets for the window list"""
+		#
+		#self.window_frame = tk.Frame(self.title_bar,width=100)
+		self.window_frame = tk.Frame(self.title_bar)
+		self.window_frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(30))
+		# Create a Combobox for window selection
+		self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly",width=60)
+		self.window_combobox.pack(fill=tk.X, padx=(0), pady=(0), ipady=5)
+		self.window_combobox.bind("<<ComboboxSelected>>", self.on_window_selected)
 		
+		# Create a frame for the time/date display on the right side of the title bar
+		self.time_frame = tk.Frame(self.title_bar)
+		self.time_frame.pack(side=tk.RIGHT, padx=1, pady=0)
+		#
+		self.update_window_list()
+		#
+		self.start_observer_thread()
+		self.start_time_thread()
+	#
 	def on_window_selected(self, event):
 		"""Handle window selection and activate the selected window"""
 		selected_index = self.window_combobox.current()  # Get the index of the selected item
 		selected_value = self.window_combobox.get()      # Get the value of the selected item
-		
-		print(f"Selected index: {selected_index}")
-		print(f"Selected value: {selected_value}")
 		wid="w{}".format(selected_index)
 		print("Debug windows wid: ",self.windows[wid])
 		# You can use either the index or the value to find and activate the window
 		self.activate_window(self.windows[wid]["id"])
-		#self.activate_window(selected_index)
-		# or
-		# self.activate_window_by_value(selected_value)
-	
+	#
 	def activate_window(self, wmctrlId):
 		"""Activate the selected window using its index"""
 		try:
@@ -151,6 +306,7 @@ class WindowManager:
 			)
 		except subprocess.CalledProcessError as e:
 			print(f"Error activating window: {e}")
+	#-- MOVE TO TOP OF Window and stick
 	#
 	def start_move(self, event):
 		"""Begin the window movement"""
@@ -167,15 +323,30 @@ class WindowManager:
 			# Calculate the new position
 			x = self.root.winfo_x() + (event.x - self._drag_data["x"])
 			y = self.root.winfo_y() + (event.y - self._drag_data["y"])
- 
 			# Update the window position
 			self.root.geometry(f"+{x}+{y}")
 	#
 	def on_release(self, event):
 		"""End the window movement"""
 		self._drag_data["drag"] = False
-	
+	#
+	def on_close(self):
+		"""Clean up when the application is closing"""
+		self.stop_thread = True
+		self.root.destroy()
+#--
+#
+class KosDWM:
+	def __init__(self):
+		print("KosDWM().init() STARTED!")
+		self.root       = tk.Tk()
+		self.wmctrltray = None
+	def Start(self):
+		print("KosDWM.Start() STARTED!")
+		self.wmctrltray = WMCtrlTray(self.root)
+		self.root.mainloop()
+#--
+#
 if __name__ == "__main__":
-	root = tk.Tk()
-	app = WindowManager(root)
-	root.mainloop()
+	kosdwm = KosDWM()
+	kosdwm.Start()
