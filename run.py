@@ -42,7 +42,7 @@ class WMCtrlTray:
 	def __init__(self, root):
 		self.windows      = {}   # w0={id=0,name='',host='',class='',hash='crc32b'}
 		self.lines        = []   # wmctrl output
-		self.windows_hash = None # concat all lines of wmctrl -l into one and create crc32b
+		self.windows_hash = None
 		self.stop_thread  = False
 		self.root         = root
 		# Get the primary monitor's dimensions
@@ -103,25 +103,28 @@ class WMCtrlTray:
 				self.lines = []
 				#
 				# xprop -root _NET_ACTIVE_WINDOW | awk '{print $5}'
-				result = subprocess.run(
+				r1 = subprocess.run(
 					["xprop", "-root", "_NET_ACTIVE_WINDOW"],
 					capture_output=True,
 					text=True,
 					check=True
 				)
-				print("active window by xprop: ",result.stdout.split(" ")[4])
+				current_active = r1.stdout.split(" ")[4]
+				if self.last_active_window is not None and self.last_active_window != current_active:
+					self.root.after(0, self.collapse_combobox)
+				self.last_active_window = current_active
 				#    0 - 9
 				#    ID       X PROC   TOP  LEFT WIDTH HEIGHT CLASS             HOST      PROG_INFO
 				# 0x0080000e  0 4026   468  341  898  446  xterm.UXTerm          kosgen0 t3ch@kosgen2: ~/sdb1/t3ch
 				# 0x0140000a  0 11288  280  93   1086 692  geany.Geany           kosgen0 *run.py - /home/t3ch/Working/Hobies/OpenBox/WindowsMenu - Geany
-				result = subprocess.run(
+				r2 = subprocess.run(
 					["wmctrl", "-lpGuFxS"],
 					capture_output=True,
 					text=True,
 					check=True
 				)
 				#
-				for line in result.stdout.splitlines():
+				for line in r2.stdout.splitlines():
 					line = re.sub(r'\s+',' ',line)
 					#print("debug line: ",line)
 					self.lines.append(line)
@@ -134,7 +137,7 @@ class WMCtrlTray:
 					print("Updating windows list, windows_hash {} vs {}".format( self.windows_hash, windows_hash ))
 					self.root.after(0, self.update_window_list)
 					self.windows_hash = windows_hash
-				time.sleep(10)  # Check every second/s
+				time.sleep(1)  # Check every second
 			except subprocess.CalledProcessError as e:
 				print(f"Error running wmctrl: {e}")
 				time.sleep(5)  # Wait longer if there's an error
@@ -193,13 +196,17 @@ class WMCtrlTray:
 					self.windows[wid]["id"]    = a[0]
 					self.windows[wid]["fid"]   = fid
 					self.windows[wid]["pid"]   = a[2]
+					self.windows[wid]["left"]  = a[3]
+					self.windows[wid]["top"]   = a[4]
 					self.windows[wid]["class"] = a[7]
 					self.windows[wid]["host"]  = a[8]
 					self.windows[wid]["name"]  = a[9]
 					self.windows[wid]["hash"]  = crc
 				else:
 					#
-					self.windows[wid] = {"id":a[0],"pid":a[2],"fid":fid,"class":a[7],"host":a[8],"name":a[9],}
+					self.windows[wid] = {"id":a[0],"pid":a[2],"fid":fid,"left":a[3],"top":a[4],"class":a[7],"host":a[8],"name":a[9],}
+					# generate window id ex.: wid_left+_+top
+					# check class, if xterm.XTerm start script -O dataio.out -T timeio.out
 				cnt+=1
 				print("wid: {}".format( self.windows[wid] ))
 			#
@@ -271,10 +278,21 @@ class WMCtrlTray:
 		#self.window_frame = tk.Frame(self.title_bar,width=100)
 		self.window_frame = tk.Frame(self.title_bar)
 		self.window_frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(30))
-		# Create a Combobox for window selection
-		self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly",width=60)
+		self.desktop_buttons_frame = tk.Frame(self.window_frame)
+		self.desktop_buttons_frame.pack(side=tk.LEFT, padx=(0,5))
+		for i in range(4):
+			btn = tk.Button(self.desktop_buttons_frame, text=str(i+1), width=2, command=lambda n=i: self.switch_desktop(n))
+			btn.pack(side=tk.LEFT, padx=1)
+		self.combobox_expanded_width = 60
+		self.combobox_collapsed_width = 3
+		self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly",width=self.combobox_collapsed_width)
 		self.window_combobox.pack(fill=tk.X, padx=(0), pady=(0), ipady=5)
-		self.window_combobox.bind("<<ComboboxSelected>>", self.on_window_selected)
+		self.window_combobox.bind("<<ComboboxSelected>>", self.on_combobox_selected)
+		self.window_combobox.bind("<ButtonPress-1>", self.on_combobox_click)
+		self.root.bind("<ButtonPress-1>", self.on_root_click)
+		self.root.bind("<FocusOut>", self.on_root_focus_out)
+		self.combobox_was_expanded = False
+		self.last_active_window = None
 		
 		# Create a frame for the time/date display on the right side of the title bar
 		self.time_frame = tk.Frame(self.title_bar)
@@ -285,6 +303,35 @@ class WMCtrlTray:
 		self.start_observer_thread()
 		self.start_time_thread()
 	#
+	def on_combobox_click(self, event):
+		self.combobox_was_expanded = True
+		self.window_combobox.configure(width=self.combobox_expanded_width)
+
+	def on_combobox_selected(self, event):
+		self.window_combobox.configure(width=self.combobox_collapsed_width)
+		self.combobox_was_expanded = False
+		self.on_window_selected(event)
+
+	def on_root_click(self, event):
+		if self.combobox_was_expanded:
+			if not self.window_combobox.winfo_exists():
+				return
+			x = event.x_root - self.window_combobox.winfo_rootx()
+			y = event.y_root - self.window_combobox.winfo_rooty()
+			if x < 0 or x > self.window_combobox.winfo_width() or y < 0 or y > self.window_combobox.winfo_height():
+				self.window_combobox.configure(width=self.combobox_collapsed_width)
+				self.combobox_was_expanded = False
+
+	def on_root_focus_out(self, event):
+		if self.combobox_was_expanded:
+			self.window_combobox.configure(width=self.combobox_collapsed_width)
+			self.combobox_was_expanded = False
+
+	def collapse_combobox(self):
+		if self.combobox_was_expanded:
+			self.window_combobox.configure(width=self.combobox_collapsed_width)
+			self.combobox_was_expanded = False
+
 	def on_window_selected(self, event):
 		"""Handle window selection and activate the selected window"""
 		selected_index = self.window_combobox.current()  # Get the index of the selected item
@@ -306,6 +353,19 @@ class WMCtrlTray:
 			)
 		except subprocess.CalledProcessError as e:
 			print(f"Error activating window: {e}")
+
+	def switch_desktop(self, desktop):
+		"""Switch to the specified Openbox desktop"""
+		try:
+			print(f"switch_desktop() {desktop}")
+			subprocess.run(
+				["wmctrl", "-s", str(desktop)],
+				capture_output=True,
+				text=True,
+				check=True
+			)
+		except subprocess.CalledProcessError as e:
+			print(f"Error switching desktop: {e}")
 	#-- MOVE TO TOP OF Window and stick
 	#
 	def start_move(self, event):
