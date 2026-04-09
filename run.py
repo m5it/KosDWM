@@ -308,11 +308,13 @@ class WMCtrlTray:
 		self.start_time_thread()
 	#
 	def on_combobox_click(self, event):
+		"""Handle combobox click - expand and show actual window name"""
 		self.combobox_was_expanded = True
 		self.window_combobox.configure(width=self.combobox_expanded_width, justify='left')
 		self.window_combobox.set(self.combobox_actual_value)
 
 	def on_combobox_selected(self, event):
+		"""Handle window selection from dropdown - collapse combobox and switch to selected window"""
 		selected_index = self.window_combobox.current()
 		selected_value = self.window_combobox.get()
 		self.combobox_actual_value = selected_value
@@ -322,6 +324,7 @@ class WMCtrlTray:
 		self.on_window_selected_by_index(selected_index, selected_value)
 
 	def on_root_click(self, event):
+		"""Collapse combobox when clicking outside its bounds"""
 		if self.combobox_was_expanded:
 			if not self.window_combobox.winfo_exists():
 				return
@@ -333,23 +336,27 @@ class WMCtrlTray:
 				self.combobox_was_expanded = False
 
 	def on_root_focus_out(self, event):
+		"""Collapse combobox when root window loses focus"""
 		if self.combobox_was_expanded:
 			self.window_combobox.configure(width=self.combobox_collapsed_width, justify='center')
 			self.window_combobox.set("▼")
 			self.combobox_was_expanded = False
 
 	def collapse_combobox(self):
+		"""Collapse combobox to collapsed state with triangle icon"""
 		if self.combobox_was_expanded:
 			self.window_combobox.configure(width=self.combobox_collapsed_width, justify='center')
 			self.window_combobox.set("▼")
 			self.combobox_was_expanded = False
 
 	def on_window_selected_by_index(self, selected_index, selected_value):
+		"""Activate window by index and save selected value"""
 		wid = "w{}".format(selected_index)
 		print("Debug windows wid: ", self.windows[wid])
 		self.activate_window(self.windows[wid]["id"])
 
 	def on_window_selected(self, event):
+		"""Handle window selection from combobox"""
 		selected_index = self.window_combobox.current()
 		selected_value = self.window_combobox.get()
 		self.on_window_selected_by_index(selected_index, selected_value)
