@@ -8,6 +8,7 @@ import atexit
 import traceback
 import re,time,sys
 from src.functions import *
+from src.config import Config
 #--
 #
 kosdwm  = None
@@ -39,12 +40,13 @@ sys.excepthook = handle_exception
 #--
 #
 class WMCtrlTray:
-	def __init__(self, root):
-		self.windows      = {}   # w0={id=0,name='',host='',class='',hash='crc32b'}
-		self.lines        = []   # wmctrl output
+	def __init__(self, root, config):
+		self.windows      = {}
+		self.lines        = []
 		self.windows_hash = None
 		self.stop_thread  = False
 		self.root         = root
+		self.config       = config
 		# Get the primary monitor's dimensions
 		self.screen = screeninfo.get_monitors()[0]
 		screen_width = self.screen.width
@@ -137,6 +139,7 @@ class WMCtrlTray:
 					print("Updating windows list, windows_hash {} vs {}".format( self.windows_hash, windows_hash ))
 					self.root.after(0, self.update_window_list)
 					self.windows_hash = windows_hash
+				self.root.after(0, self._update_active_desktop_button)
 				time.sleep(1)  # Check every second
 			except subprocess.CalledProcessError as e:
 				print(f"Error running wmctrl: {e}")
@@ -181,12 +184,12 @@ class WMCtrlTray:
 			#
 			for line in reversed(self.lines):
 				a = line.split(" ",9)
-				print("a: ",a)
+				#print("a: ",a)
 				side_number = 1
 				if int(a[3])>=self.screen.width:
 					side_number = 2
 				windows.append("{} ) {}".format(side_number, a[9])) # prepare graphics dropdown with names only
-				print("{} debug line: {}".format( self.screen.width, line ))
+				#print("{} debug line: {}".format( self.screen.width, line ))
 				fid = shorten_hex(a[0])
 				# save object so later is possible to access by selected item id
 				crc = crc32b( line )
@@ -276,20 +279,41 @@ class WMCtrlTray:
 	#
 	def create_widgets(self):
 		"""Create the widgets for the window list"""
-		#
+		#-- Main WindowFrame START
 		#self.window_frame = tk.Frame(self.title_bar,width=100)
 		self.window_frame = tk.Frame(self.title_bar)
-		self.window_frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(30))
-		self.desktop_buttons_frame = tk.Frame(self.window_frame)
-		self.desktop_buttons_frame.pack(side=tk.LEFT, padx=(0,5))
-		for i in range(4):
-			btn = tk.Button(self.desktop_buttons_frame, text=str(i+1), width=2, command=lambda n=i: self.switch_desktop(n))
-			btn.pack(side=tk.LEFT, padx=1)
+		self.window_frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(0))
+		#-- Combobox START
+		self.frame1 = tk.Frame(self.window_frame)
+		self.frame1.pack(fill=tk.BOTH, side=tk.LEFT, padx=(0))
+		#
 		self.combobox_expanded_width = 60
 		self.combobox_collapsed_width = 2
 		self.combobox_actual_value = ""
-		self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly",width=self.combobox_collapsed_width, justify='center')
+		self.window_combobox = tk.ttk.Combobox(self.frame1, state="readonly",width=self.combobox_collapsed_width, justify='center')
 		self.window_combobox.pack(fill=tk.X, padx=(0), pady=(0), ipady=5)
+		#-- Desktop Buttons (1-4) START
+		self.frame2 = tk.Frame(self.window_frame)
+		self.frame2.pack(fill=tk.BOTH, padx=(0))
+		self.desktop_buttons_frame = tk.Frame(self.frame2)
+		self.desktop_buttons_frame.pack(side=tk.LEFT, padx=(0,5))
+		self.desktop_buttons = []
+		inactive_bg = self.config.get("inactive_button_bg", "#606060")
+		for i in range(4):
+			btn = tk.Button(
+				self.desktop_buttons_frame,
+				text=str(i+1),
+				width=2,
+				bg=inactive_bg,
+				fg="white",
+				relief="raised",
+				bd=1,
+				command=lambda n=i: self.switch_desktop(n)
+			)
+			btn.pack(side=tk.LEFT, padx=1)
+			self.desktop_buttons.append(btn)
+		self._update_active_desktop_button()
+		#-- WindowCombobox Continue Settings
 		self.window_combobox.set("▼")
 		self.window_combobox.bind("<<ComboboxSelected>>", self.on_combobox_selected)
 		self.window_combobox.bind("<ButtonPress-1>", self.on_combobox_click)
@@ -299,7 +323,9 @@ class WMCtrlTray:
 		self.last_active_window = None
 		
 		# Create a frame for the time/date display on the right side of the title bar
-		self.time_frame = tk.Frame(self.title_bar)
+		self.frame3 = tk.Frame(self.title_bar)
+		self.frame3.pack(side=tk.RIGHT)
+		self.time_frame = tk.Frame(self.frame3)
 		self.time_frame.pack(side=tk.RIGHT, padx=1, pady=0)
 		#
 		self.update_window_list()
@@ -384,8 +410,52 @@ class WMCtrlTray:
 				text=True,
 				check=True
 			)
+			print(f"wmctrl -s succeeded, calling _update_active_desktop_button()")
+			self.root.after(0, self._update_active_desktop_button)
 		except subprocess.CalledProcessError as e:
 			print(f"Error switching desktop: {e}")
+
+	def _get_current_desktop(self):
+		"""Get the current active desktop number"""
+		try:
+			result = subprocess.run(
+				["wmctrl", "-d"],
+				capture_output=True,
+				text=True,
+				check=True
+			)
+			# result Ex.:
+			# t3ch@kosgen0:~/Working/Hobies/OpenBox/KosDWM$ wmctrl -d
+			# 0  * DG: 3286x1080  VP: 0,0  WA: 0,0 3286x1080  Escritorio 1
+			# 1  - DG: 3286x1080  VP: 0,0  WA: 0,0 3286x1080  Escritorio 2
+			# 2  - DG: 3286x1080  VP: 0,0  WA: 0,0 3286x1080  Escritorio 3
+			# 3  - DG: 3286x1080  VP: 0,0  WA: 0,0 3286x1080  Escritorio 4
+			#
+			for line in result.stdout.splitlines():
+				line = re.sub(r'\s+',' ',line)
+				#if line.startswith('*'):
+				if rmatch(line,r"^\d+\x20\*.*"):
+					desktop_num = int(line.split(" ")[0])
+					print(f"_get_current_desktop() found: {desktop_num}")
+					return desktop_num
+			print("_get_current_desktop() no * found, returning 0")
+			return 0
+		except (subprocess.CalledProcessError, IndexError) as e:
+			print(f"Error getting current desktop: {e}")
+			return 0
+	#
+	def _update_active_desktop_button(self):
+		"""Update desktop button colors based on current active desktop"""
+		current = self._get_current_desktop()
+		print(f"_update_active_desktop_button() current={current}, buttons={len(self.desktop_buttons)}")
+		active_bg = self.config.get("active_button_bg", "#4a90d9")
+		inactive_bg = self.config.get("inactive_button_bg", "#606060")
+		for i, btn in enumerate(self.desktop_buttons):
+			if i == current:
+				btn.configure(bg=active_bg, activebackground=active_bg)
+			else:
+				btn.configure(bg=inactive_bg, activebackground=inactive_bg)
+		self.root.update_idletasks()
 	#-- MOVE TO TOP OF Window and stick
 	#
 	def start_move(self, event):
@@ -420,10 +490,11 @@ class KosDWM:
 	def __init__(self):
 		print("KosDWM().init() STARTED!")
 		self.root       = tk.Tk()
+		self.config     = Config()
 		self.wmctrltray = None
 	def Start(self):
 		print("KosDWM.Start() STARTED!")
-		self.wmctrltray = WMCtrlTray(self.root)
+		self.wmctrltray = WMCtrlTray(self.root, self.config)
 		self.root.mainloop()
 #--
 #
