@@ -213,6 +213,8 @@ class WMCtrlTray:
 			self.window_combobox['values'] = windows
 			if windows:
 				self.window_combobox.current(0)
+				self.combobox_actual_value = windows[0]
+				self.window_combobox.set("▼")
 		except subprocess.CalledProcessError as e:
 			print(f"Error running wmctrl: {e}")
 			self.window_combobox['values'] = ["Error getting window list"]
@@ -284,8 +286,9 @@ class WMCtrlTray:
 			btn = tk.Button(self.desktop_buttons_frame, text=str(i+1), width=2, command=lambda n=i: self.switch_desktop(n))
 			btn.pack(side=tk.LEFT, padx=1)
 		self.combobox_expanded_width = 60
-		self.combobox_collapsed_width = 3
+		self.combobox_collapsed_width = 2
 		self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly",width=self.combobox_collapsed_width)
+		self.combobox_actual_value = ""
 		self.window_combobox.pack(fill=tk.X, padx=(0), pady=(0), ipady=5)
 		self.window_combobox.bind("<<ComboboxSelected>>", self.on_combobox_selected)
 		self.window_combobox.bind("<ButtonPress-1>", self.on_combobox_click)
@@ -306,10 +309,44 @@ class WMCtrlTray:
 	def on_combobox_click(self, event):
 		self.combobox_was_expanded = True
 		self.window_combobox.configure(width=self.combobox_expanded_width)
+		self.window_combobox.set(self.combobox_actual_value)
 
 	def on_combobox_selected(self, event):
+		selected_index = self.window_combobox.current()
+		selected_value = self.window_combobox.get()
 		self.window_combobox.configure(width=self.combobox_collapsed_width)
+		self.window_combobox.set("▼")
 		self.combobox_was_expanded = False
+		self.on_window_selected_by_index(selected_index, selected_value)
+
+	def on_root_click(self, event):
+		if self.combobox_was_expanded:
+			if not self.window_combobox.winfo_exists():
+				return
+			x = event.x_root - self.window_combobox.winfo_rootx()
+			y = event.y_root - self.window_combobox.winfo_rooty()
+			if x < 0 or x > self.window_combobox.winfo_width() or y < 0 or y > self.window_combobox.winfo_height():
+				self.window_combobox.configure(width=self.combobox_collapsed_width)
+				self.window_combobox.set("▼")
+				self.combobox_was_expanded = False
+
+	def on_root_focus_out(self, event):
+		if self.combobox_was_expanded:
+			self.window_combobox.configure(width=self.combobox_collapsed_width)
+			self.window_combobox.set("▼")
+			self.combobox_was_expanded = False
+
+	def collapse_combobox(self):
+		if self.combobox_was_expanded:
+			self.window_combobox.configure(width=self.combobox_collapsed_width)
+			self.window_combobox.set("▼")
+			self.combobox_was_expanded = False
+
+	def on_window_selected_by_index(self, selected_index, selected_value):
+		wid = "w{}".format(selected_index)
+		self.combobox_actual_value = selected_value
+		print("Debug windows wid: ", self.windows[wid])
+		self.activate_window(self.windows[wid]["id"])
 		self.on_window_selected(event)
 
 	def on_root_click(self, event):
@@ -330,16 +367,13 @@ class WMCtrlTray:
 	def collapse_combobox(self):
 		if self.combobox_was_expanded:
 			self.window_combobox.configure(width=self.combobox_collapsed_width)
+			self.window_combobox.set("▼")
 			self.combobox_was_expanded = False
 
 	def on_window_selected(self, event):
-		"""Handle window selection and activate the selected window"""
-		selected_index = self.window_combobox.current()  # Get the index of the selected item
-		selected_value = self.window_combobox.get()      # Get the value of the selected item
-		wid="w{}".format(selected_index)
-		print("Debug windows wid: ",self.windows[wid])
-		# You can use either the index or the value to find and activate the window
-		self.activate_window(self.windows[wid]["id"])
+		selected_index = self.window_combobox.current()
+		selected_value = self.window_combobox.get()
+		self.on_window_selected_by_index(selected_index, selected_value)
 	#
 	def activate_window(self, wmctrlId):
 		"""Activate the selected window using its index"""
