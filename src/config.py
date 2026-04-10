@@ -9,7 +9,10 @@ class Config:
     DEFAULT_CONFIG = {
         "active_button_bg": "#4a90d9",
         "inactive_button_bg": "#606060",
-        "bar_height": 25
+        "bar_height": 50,
+        "button_height": 1,
+        "combobox_ipady": 1,
+        "layout_mode": "buttons"  # "buttons" = buttons + all windows combobox, "comboboxes" = 4 desktop window comboboxes
     }
     
     def __init__(self):
