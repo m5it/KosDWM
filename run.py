@@ -386,12 +386,12 @@ class WMCtrlTray:
 				frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(1,0))
 				cb = tk.ttk.Combobox(frame, state="readonly", width=button_width, justify='center')
 				cb.pack(fill=tk.X, padx=(0), pady=(0), ipady=combobox_ipady)
-				cb.set(cb.actual_value)
 				cb.desktop_id = desktop_id
 				cb.collapsed_width = button_width
 				cb.expanded_width = 40
 				cb.was_expanded = False
 				cb.actual_value = ""
+				cb.set(cb.actual_value)
 				cb.bind("<<ComboboxSelected>>", self.on_desktop_combobox_selected)
 				cb.bind("<ButtonPress-1>", self.on_desktop_combobox_click)
 				self.desktop_comboboxes.append(cb)
