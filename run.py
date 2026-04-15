@@ -271,7 +271,12 @@ class WMCtrlTray:
 				print("DEBUG _update_desktop_comboboxes() wid: {}".format(wid))
 				owid = self.windows[wid]
 				# ex. owid: self.windows[wid] = {"id":a[0],"desktop":a[1],"pid":a[2],"fid":fid,"left":a[3],"top":a[4],"class":a[7],"host":a[8],"name":a[9],}
-				windows_for_desktop.append(owid['name'])
+				# Calculate side_number based on window position
+				side_number = 1
+				if int(owid['left']) >= self.screen.width:
+					side_number = 2
+				# Display: side_number TITLE
+				windows_for_desktop.append("{} {}".format(side_number, owid['name']))
 			#
 			print("DEBUG _update_desktop_comboboxes() appending windows to desktop_comboboxes... {}".format(desktop_id))
 			cb = self.desktop_comboboxes[int(desktop_id)]
@@ -398,9 +403,23 @@ class WMCtrlTray:
 			self.window_combobox = None
 			self.combobox_was_expanded = False
 		
+		# Add a red frame under the four comboboxes
+		self.red_frame = tk.Frame(self.root, bg='red', height=2)
+		self.red_frame.pack(fill=tk.X, padx=(0,0), pady=(2, 0))
+	
 		self.root.bind("<ButtonPress-1>", self.on_root_click)
 		self.root.bind("<FocusOut>", self.on_root_focus_out)
+		# Bind hover events to show/hide application menu
+		self.root.bind("<Enter>", self.on_root_enter)
+		self.root.bind("<Leave>", self.on_root_leave)
 		self.last_active_window = None
+		self._hide_menu_after_id = None
+		
+		# Create application menu (Help -> About)
+		self.app_menu = tk.Menu(self.root, tearoff=0)
+		self.help_menu = tk.Menu(self.app_menu, tearoff=0)
+		self.help_menu.add_command(label="About", command=self.show_about)
+		self.app_menu.add_cascade(label="Help", menu=self.help_menu)
 		
 		# Create a frame for the time/date display on the right side of the title bar
 		self.frame3 = tk.Frame(self.title_bar)
@@ -519,6 +538,53 @@ class WMCtrlTray:
 		except subprocess.CalledProcessError as e:
 			print(f"Error activating window: {e}")
 
+	def show_about(self):
+		"""Show About window with content from ABOUT.md"""
+		import os
+		about_win = tk.Toplevel(self.root)
+		about_win.title("About")
+		about_win.geometry("400x150")
+		about_win.resizable(False, False)
+		
+		about_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ABOUT.md")
+		try:
+			with open(about_file, 'r') as f:
+				about_content = f.read().strip()
+		except FileNotFoundError:
+			about_content = "About file not found."
+		
+		tk.Label(about_win, text=about_content, pady=20, font=('Arial', 10), wraplength=380).pack()
+		tk.Button(about_win, text="OK", command=about_win.destroy).pack()
+	
+	def on_root_enter(self, event):
+		"""Show application menu on root window hover"""
+		if self._hide_menu_after_id:
+			self.root.after_cancel(self._hide_menu_after_id)
+			self._hide_menu_after_id = None
+		
+		x = self.root.winfo_x()
+		y = self.root.winfo_y() + self.root.winfo_height() - 2
+		self.app_menu.post(x, y)
+	
+	def on_root_leave(self, event):
+		"""Hide application menu when leaving root window"""
+		self._hide_menu_after_id = self.root.after(300, self.hide_menu_if_needed)
+	
+	def hide_menu_if_needed(self):
+		"""Hide menu if mouse is not over menu or root window"""
+		self._hide_menu_after_id = None
+		x = self.root.winfo_pointerx()
+		y = self.root.winfo_pointery()
+		root_x = self.root.winfo_rootx()
+		root_y = self.root.winfo_rooty()
+		root_width = self.root.winfo_width()
+		root_height = self.root.winfo_height()
+		
+		over_root = (root_x <= x <= root_x + root_width and root_y <= y <= root_y + root_height)
+		
+		if not over_root:
+			self.app_menu.unpost()
+	
 	def switch_desktop(self, desktop):
 		"""Switch to the specified Openbox desktop"""
 		try:
