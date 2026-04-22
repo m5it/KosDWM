@@ -53,8 +53,10 @@ class WMCtrlTray:
 		screen_width = self.screen.width
 		screen_height = self.screen.height
 		# Set the window to span the full width of the screen at the top
-		bar_height = self.config.get("bar_height", 50)
-		self.root.geometry(f"{screen_width}x{bar_height}+0+0")
+		self.bar_height = 33
+		self.bar_height_expanded = 83
+		# Window stays at top of screen (Y=0)
+		self.root.geometry(f"{screen_width}x{self.bar_height}+0+0")
 		# Remove the title bar and window decorations
 		self.root.overrideredirect(True)
 		# Make the window stay on top of other windows
@@ -69,7 +71,7 @@ class WMCtrlTray:
 		#menu_bar.add_cascade(label="Test",menu=file_menu)
 		#self.root.config(menu=menu_bar)
 		
-		self.title_bar = tk.Frame(self.root, bg='gray', height=bar_height,relief='raised',bd=1)
+		self.title_bar = tk.Frame(self.root, bg='gray', height=self.bar_height,relief='raised',bd=1)
 		#self.title_bar.pack(fill=tk.X, padx=(20,self.screen.width/2), pady=(0,0), ipady=5, side=tk.TOP)
 		self.title_bar.pack(fill=tk.X)
 		# Make the window draggable by the title bar
@@ -240,8 +242,7 @@ class WMCtrlTray:
 				self.window_combobox['values'] = ["wmctrl not found"]
 		#
 		self._update_desktop_comboboxes()
-		if self.config.get("layout_mode", "buttons") == "buttons":
-			self._update_active_desktop_button()
+		self._update_active_desktop_button()
 		return True
 
 	def _update_desktop_comboboxes(self):
@@ -343,83 +344,92 @@ class WMCtrlTray:
 	def create_widgets(self):
 		"""Create the widgets for the window list"""
 		combobox_ipady = self.config.get("combobox_ipady", 1)
-		layout_mode = self.config.get("layout_mode", "buttons")
 		
 		#-- Main WindowFrame START
 		self.window_frame = tk.Frame(self.title_bar)
 		self.window_frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(0))
 		
-		if layout_mode == "buttons":
-			# Mode 1: Desktop buttons + all windows combobox
-			self.desktop_buttons = []
-			inactive_bg = self.config.get("inactive_button_bg", "#606060")
-			self.desktop_buttons_frame = tk.Frame(self.window_frame)
-			self.desktop_buttons_frame.pack(side=tk.LEFT, padx=(0,2))
-			for i in range(4):
-				btn = tk.Button(
-					self.desktop_buttons_frame,
-					text=str(i+1),
-					width=2,
-					height=1,
-					bg=inactive_bg,
-					fg="white",
-					relief="raised",
-					bd=1,
-					command=lambda n=i: self.switch_desktop(n)
-				)
-				btn.pack(side=tk.LEFT, padx=(1,0))
-				self.desktop_buttons.append(btn)
-			self._update_active_desktop_button()
-			
-			# All windows combobox
-			self.combobox_expanded_width = 60
-			self.combobox_collapsed_width = 2
-			self.combobox_actual_value = ""
-			self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly", width=self.combobox_collapsed_width, justify='center')
-			self.window_combobox.pack(fill=tk.X, padx=(0), pady=(0), ipady=combobox_ipady)
-			self.window_combobox.set(self.window_combobox.get())
-			self.window_combobox.bind("<<ComboboxSelected>>", self.on_combobox_selected)
-			self.window_combobox.bind("<ButtonPress-1>", self.on_combobox_click)
-			self.combobox_was_expanded = False
-			self.desktop_comboboxes = []
-		else:
-			# Mode 2: 4 desktop window comboboxes only
-			self.desktop_comboboxes = []
-			button_width = 3
-			for desktop_id in range(4):
-				frame = tk.Frame(self.window_frame)
-				frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(1,0))
-				cb = tk.ttk.Combobox(frame, state="readonly", width=button_width, justify='center')
-				cb.pack(fill=tk.X, padx=(0), pady=(0), ipady=combobox_ipady)
-				cb.desktop_id = desktop_id
-				cb.collapsed_width = button_width
-				cb.expanded_width = 40
-				cb.was_expanded = False
-				cb.actual_value = ""
-				cb.set(cb.actual_value)
-				cb.bind("<<ComboboxSelected>>", self.on_desktop_combobox_selected)
-				cb.bind("<ButtonPress-1>", self.on_desktop_combobox_click)
-				self.desktop_comboboxes.append(cb)
-			self.window_combobox = None
-			self.combobox_was_expanded = False
+		# Always visible: Desktop buttons + All windows combobox
+		self.desktop_buttons = []
+		inactive_bg = self.config.get("inactive_button_bg", "#606060")
+		self.desktop_buttons_frame = tk.Frame(self.window_frame)
+		self.desktop_buttons_frame.pack(side=tk.LEFT, padx=(0,2))
+		for i in range(4):
+			btn = tk.Button(
+				self.desktop_buttons_frame,
+				text=str(i+1),
+				width=2,
+				height=1,
+				bg=inactive_bg,
+				fg="white",
+				relief="raised",
+				bd=1,
+				command=lambda n=i: self.switch_desktop(n)
+			)
+			btn.pack(side=tk.LEFT, padx=(1,0))
+			self.desktop_buttons.append(btn)
+		self._update_active_desktop_button()
 		
-		# Add a red frame under the four comboboxes
-		self.red_frame = tk.Frame(self.root, bg='red', height=2)
+		# All windows combobox (always visible)
+		self.combobox_expanded_width = 60
+		self.combobox_collapsed_width = 2
+		self.combobox_actual_value = ""
+		self.window_combobox = tk.ttk.Combobox(self.window_frame, state="readonly", width=self.combobox_collapsed_width, justify='center')
+		self.window_combobox.pack(fill=tk.X, padx=(0), pady=(0), ipady=combobox_ipady)
+		self.window_combobox.set(self.window_combobox.get())
+		self.window_combobox.bind("<<ComboboxSelected>>", self.on_combobox_selected)
+		self.window_combobox.bind("<ButtonPress-1>", self.on_combobox_click)
+		self.combobox_was_expanded = False
+		
+		# Create hidden frame for 4 desktop comboboxes + red frame + Help menu (shown on hover)
+		self.hidden_frame = tk.Frame(self.root)
+		
+		# Create a frame for the 4 desktop comboboxes (horizontal layout)
+		self.combo_row = tk.Frame(self.hidden_frame, bg='gray30')
+		self.combo_row.pack(fill=tk.X)
+		
+		self.desktop_comboboxes = []
+		button_width = 3
+		for desktop_id in range(4):
+			cb = tk.ttk.Combobox(self.combo_row, state="readonly", width=button_width, justify='center')
+			cb.pack(side=tk.LEFT, padx=(1,0), pady=(0), ipady=combobox_ipady)
+			cb.desktop_id = desktop_id
+			cb.collapsed_width = button_width
+			cb.expanded_width = 40
+			cb.was_expanded = False
+			cb.actual_value = ""
+			cb.set(cb.actual_value)
+			cb.bind("<<ComboboxSelected>>", self.on_desktop_combobox_selected)
+			cb.bind("<ButtonPress-1>", self.on_desktop_combobox_click)
+			self.desktop_comboboxes.append(cb)
+		
+		# Red frame below comboboxes
+		self.red_frame = tk.Frame(self.hidden_frame, bg='red', height=2)
 		self.red_frame.pack(fill=tk.X, padx=(0,0), pady=(2, 0))
-	
+		
+		# Help menu button below red frame
+		self.help_menu_btn = tk.Menubutton(self.hidden_frame, text="Help", underline=0)
+		self.help_menu_btn.pack(side=tk.LEFT, padx=(5,0), pady=(2,0))
+		self.help_menu = tk.Menu(self.help_menu_btn, tearoff=0)
+		self.help_menu.add_command(label="About", command=self._on_help_menu_closed)
+		self.help_menu_btn.config(menu=self.help_menu)
+		# Track when Help menu is open
+		self.help_menu_btn.bind("<ButtonPress-1>", lambda e: setattr(self, '_any_dropdown_open', True))
+		
+		# Initially hide the hidden frame
+		self.hidden_frame.pack_forget()
+		self._hidden_visible = False
+		self._hide_timer = None
+		self._any_dropdown_open = False
+		
+		# Bind hover events to show/hide hidden frame
+		# Only bind to root, not to hidden_frame to avoid rapid toggling
+		self.root.bind("<Enter>", self._on_hidden_show)
+		self.root.bind("<Leave>", self._on_hidden_hide)
+		
 		self.root.bind("<ButtonPress-1>", self.on_root_click)
 		self.root.bind("<FocusOut>", self.on_root_focus_out)
-		# Bind hover events to show/hide application menu
-		self.root.bind("<Enter>", self.on_root_enter)
-		self.root.bind("<Leave>", self.on_root_leave)
 		self.last_active_window = None
-		self._hide_menu_after_id = None
-		
-		# Create application menu (Help -> About)
-		self.app_menu = tk.Menu(self.root, tearoff=0)
-		self.help_menu = tk.Menu(self.app_menu, tearoff=0)
-		self.help_menu.add_command(label="About", command=self.show_about)
-		self.app_menu.add_cascade(label="Help", menu=self.help_menu)
 		
 		# Create a frame for the time/date display on the right side of the title bar
 		self.frame3 = tk.Frame(self.title_bar)
@@ -451,14 +461,16 @@ class WMCtrlTray:
 		self.window_combobox.set(self.window_combobox.get())
 		self.combobox_was_expanded = False
 		self.on_window_selected_by_index(selected_index, selected_value)
-
+	
 	def on_desktop_combobox_click(self, event):
 		"""Handle desktop combobox click - expand and show windows for that desktop"""
 		cb = event.widget
 		cb.was_expanded = True
 		cb.configure(width=cb.expanded_width, justify='left')
 		cb.set(cb.actual_value if cb.actual_value else "")
-
+		# Mark that a dropdown is open - don't hide frame
+		self._any_dropdown_open = True
+	
 	def _collapse_all_desktop_comboboxes(self):
 		"""Collapse all expanded desktop comboboxes"""
 		if not hasattr(self, 'desktop_comboboxes'):
@@ -468,7 +480,9 @@ class WMCtrlTray:
 				cb.configure(width=cb.collapsed_width, justify='center')
 				cb.set(cb.actual_value)
 				cb.was_expanded = False
-
+		# Mark that dropdowns are closed
+		self._any_dropdown_open = False
+	
 	def on_desktop_combobox_selected(self, event):
 		"""Handle window selection from desktop dropdown"""
 		cb = event.widget
@@ -556,34 +570,43 @@ class WMCtrlTray:
 		tk.Label(about_win, text=about_content, pady=20, font=('Arial', 10), wraplength=380).pack()
 		tk.Button(about_win, text="OK", command=about_win.destroy).pack()
 	
-	def on_root_enter(self, event):
-		"""Show application menu on root window hover"""
-		if self._hide_menu_after_id:
-			self.root.after_cancel(self._hide_menu_after_id)
-			self._hide_menu_after_id = None
-		
-		x = self.root.winfo_x()
-		y = self.root.winfo_y() + self.root.winfo_height() - 2
-		self.app_menu.post(x, y)
+	def _on_help_menu_closed(self):
+		"""Called after Help menu action completes"""
+		self._any_dropdown_open = False
+		self.show_about()
 	
-	def on_root_leave(self, event):
-		"""Hide application menu when leaving root window"""
-		self._hide_menu_after_id = self.root.after(300, self.hide_menu_if_needed)
+	def _on_hidden_show(self, event):
+		"""Show hidden frame on root hover - also expand window height"""
+		# Cancel any pending hide
+		if hasattr(self, '_hide_timer') and self._hide_timer is not None:
+			self.root.after_cancel(self._hide_timer)
+			self._hide_timer = None
+		if not self._hidden_visible:
+			self.hidden_frame.pack(fill=tk.X, padx=(0,0), pady=(2,0))
+			self._hidden_visible = True
+		# Expand window height to show all content (stay at top of screen)
+		if self.root.winfo_height() < self.bar_height_expanded:
+			self.root.geometry(f"{self.screen.width}x{self.bar_height_expanded}+0+0")
 	
-	def hide_menu_if_needed(self):
-		"""Hide menu if mouse is not over menu or root window"""
-		self._hide_menu_after_id = None
-		x = self.root.winfo_pointerx()
-		y = self.root.winfo_pointery()
-		root_x = self.root.winfo_rootx()
-		root_y = self.root.winfo_rooty()
-		root_width = self.root.winfo_width()
-		root_height = self.root.winfo_height()
-		
-		over_root = (root_x <= x <= root_x + root_width and root_y <= y <= root_y + root_height)
-		
-		if not over_root:
-			self.app_menu.unpost()
+	def _on_hidden_hide(self, event):
+		"""Hide hidden frame on root leave with delay"""
+		if self._hidden_visible:
+			# Don't hide if any dropdown is open
+			if hasattr(self, '_any_dropdown_open') and self._any_dropdown_open:
+				return
+			# Longer delay before hiding to allow interaction with menu
+			self._hide_timer = self.root.after(500, self._do_hide)
+	
+	def _do_hide(self):
+		"""Actually hide the hidden frame and restore window height"""
+		if self._hidden_visible:
+			self.hidden_frame.pack_forget()
+			self._hidden_visible = False
+		# Restore window height (stay at top)
+		if self.root.winfo_height() >= self.bar_height_expanded:
+			self.root.geometry(f"{self.screen.width}x{self.bar_height}+0+0")
+		if hasattr(self, '_hide_timer') and self._hide_timer is not None:
+			self._hide_timer = None
 	
 	def switch_desktop(self, desktop):
 		"""Switch to the specified Openbox desktop"""
