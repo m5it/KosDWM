@@ -7,10 +7,164 @@ from datetime import datetime
 import atexit
 import traceback
 import re,time,sys
+import os
+import json
+import importlib.util
 from src.functions import *
 from src.config import Config
-#--
-#
+
+
+class MainMenus:
+	def __init__(self, root, hidden_frame, kosdwm_ref):
+		self.root = root
+		self.hidden_frame = hidden_frame
+		self.kosdwm = kosdwm_ref
+		self.menu_buttons = []
+	
+	def load_and_create_menus(self):
+		"""Load menus from folder structure and create buttons"""
+		menus_dir = os.path.expanduser("~/.config/KosDWM/Menus")
+		if not os.path.exists(menus_dir):
+			return
+		
+		for item in sorted(os.listdir(menus_dir)):
+			item_path = os.path.join(menus_dir, item)
+			if os.path.isdir(item_path) and item != '__pycache__':
+				self._create_menu_folder(item, item_path)
+	
+	def _create_menu_folder(self, name, path):
+		"""Create a menu button from a folder"""
+		menu_btn = tk.Menubutton(self.hidden_frame, text=name, underline=0)
+		menu_btn.pack(side=tk.LEFT, padx=(5,0), pady=(2,0))
+		
+		sub_menu = tk.Menu(menu_btn, tearoff=0)
+		menu_btn.config(menu=sub_menu)
+		
+		menu_btn.bind("<ButtonPress-1>", lambda e: setattr(self.kosdwm, '_any_dropdown_open', True))
+		
+		self._add_submenu_items(sub_menu, path)
+		self.menu_buttons.append(menu_btn)
+	
+	def _add_submenu_items(self, menu, path):
+		"""Add items to a menu from a folder structure"""
+		for item in sorted(os.listdir(path)):
+			if item == '__pycache__':
+				continue
+			item_path = os.path.join(path, item)
+			if os.path.isdir(item_path):
+				config_path = os.path.join(item_path, 'config.json')
+				if os.path.exists(config_path):
+					menu.add_command(label=item, command=lambda p=item_path: self._show_folder_content(p))
+				else:
+					sub = tk.Menu(menu, tearoff=0)
+					menu.add_cascade(label=item, menu=sub)
+					self._add_submenu_items(sub, item_path)
+			elif item.endswith('.py') and item != '__init__.py':
+				script_name = os.path.splitext(item)[0]
+				script_path = os.path.expanduser(item_path)
+				menu.add_command(label=script_name, command=lambda p=script_path, n=script_name: self._run_script(p, n))
+	
+	def _show_folder_content(self, path):
+		"""Show window with content from folder's config.json"""
+		self.kosdwm._any_dropdown_open = False
+		
+		config_path = os.path.join(path, 'config.json')
+		try:
+			with open(config_path, 'r') as f:
+				config = json.load(f)
+		except:
+			return
+		
+		content_file = os.path.expanduser(os.path.join(path, config.get('windowContent', '')))
+		ok_script = os.path.join(path, 'ok.py')
+		script_cmd = config.get('windowScript', '')
+		loop_interval = config.get('loop', 0)
+		looptype = config.get('looptype', 'second')
+		enable_scroll = config.get('windowScroll', True)
+		
+		win = tk.Toplevel(self.root)
+		win.title(config.get('title', os.path.basename(path)))
+		win.geometry("600x400")
+		win.resizable(False, False)
+		
+		if enable_scroll:
+			scroll_frame = tk.Frame(win)
+			scroll_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+			
+			text_widget = tk.Text(scroll_frame, height=20, width=70, font=('Courier', 9))
+			scrollbar = tk.Scrollbar(scroll_frame, orient=tk.VERTICAL, command=text_widget.yview)
+			text_widget.configure(yscrollcommand=scrollbar.set)
+			
+			if script_cmd:
+				text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+				scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+			else:
+				text_widget.pack(fill=tk.BOTH, expand=True)
+		else:
+			text_widget = tk.Text(win, height=20, width=70, font=('Courier', 9))
+			text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+		
+		text_widget.tag_configure('center', justify='center')
+		text_widget.tag_configure('left', justify='left')
+		
+		if script_cmd:
+			interval_ms = loop_interval * 1000 if looptype == 'second' else loop_interval
+			def update_output():
+				try:
+					result = subprocess.run(script_cmd, shell=True, capture_output=True, text=True, timeout=10)
+					text_widget.delete('1.0', tk.END)
+					text_widget.insert('1.0', result.stdout if result.stdout else result.stderr, 'left')
+				except Exception as e:
+					text_widget.delete('1.0', tk.END)
+					text_widget.insert('1.0', str(e), 'left')
+				if win.winfo_exists():
+					win.after(interval_ms, update_output)
+			update_output()
+		else:
+			try:
+				with open(content_file, 'r') as f:
+					content = f.read().strip()
+				text_widget.delete('1.0', tk.END)
+				text_widget.insert('1.0', content, 'left')
+			except FileNotFoundError:
+				text_widget.insert('1.0', "Content not found.", 'center')
+		
+		btn_frame = tk.Frame(win)
+		btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
+		
+		if os.path.exists(ok_script):
+			tk.Button(btn_frame, text="OK", command=lambda: self._run_ok_script(win, ok_script)).pack()
+		else:
+			tk.Button(btn_frame, text="OK", command=win.destroy).pack()
+	
+	def _run_ok_script(self, window, script_path):
+		"""Run ok.py script and close window"""
+		try:
+			spec = importlib.util.spec_from_file_location("ok_script", script_path)
+			module = importlib.util.module_from_spec(spec)
+			spec.loader.exec_module(module)
+			if hasattr(module, 'run'):
+				module.run(window)
+			else:
+				window.destroy()
+		except Exception as e:
+			print(f"Error running ok.py: {e}")
+			window.destroy()
+	
+	def _run_script(self, script_path, script_name):
+		"""Run a menu script"""
+		self.kosdwm._any_dropdown_open = False
+		try:
+			spec = importlib.util.spec_from_file_location("menu_script", script_path)
+			module = importlib.util.module_from_spec(spec)
+			spec.loader.exec_module(module)
+			if hasattr(module, 'run'):
+				module.run(self.root)
+		except Exception as e:
+			print(f"Error running {script_name}: {e}")
+			tk.Toplevel(self.root).destroy()
+
+
 kosdwm  = None
 VERSION = "0.1b"
 #--
@@ -18,7 +172,9 @@ VERSION = "0.1b"
 #
 def cleanup():
 	print("cleanup() START")
-	kos.wmctrltray.on_close()
+	global kosdwm
+	if kosdwm and hasattr(kosdwm, 'wmctrltray'):
+		kosdwm.wmctrltray.on_close()
 	return True
 #
 def handle_exception(exc_type, exc_value, exc_traceback):
@@ -404,17 +560,12 @@ class WMCtrlTray:
 			self.desktop_comboboxes.append(cb)
 		
 		# Red frame below comboboxes
-		self.red_frame = tk.Frame(self.hidden_frame, bg='red', height=2)
+		self.red_frame = tk.Frame(self.hidden_frame, height=2)
 		self.red_frame.pack(fill=tk.X, padx=(0,0), pady=(2, 0))
 		
-		# Help menu button below red frame
-		self.help_menu_btn = tk.Menubutton(self.hidden_frame, text="Help", underline=0)
-		self.help_menu_btn.pack(side=tk.LEFT, padx=(5,0), pady=(2,0))
-		self.help_menu = tk.Menu(self.help_menu_btn, tearoff=0)
-		self.help_menu.add_command(label="About", command=self._on_help_menu_closed)
-		self.help_menu_btn.config(menu=self.help_menu)
-		# Track when Help menu is open
-		self.help_menu_btn.bind("<ButtonPress-1>", lambda e: setattr(self, '_any_dropdown_open', True))
+		# Use MainMenus class for dynamic menus
+		self.main_menus = MainMenus(self.root, self.hidden_frame, self)
+		self.main_menus.load_and_create_menus()
 		
 		# Initially hide the hidden frame
 		self.hidden_frame.pack_forget()
