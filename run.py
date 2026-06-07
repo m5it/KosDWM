@@ -227,8 +227,7 @@ class WMCtrlTray:
 		#menu_bar.add_cascade(label="Test",menu=file_menu)
 		#self.root.config(menu=menu_bar)
 		
-		self.title_bar = tk.Frame(self.root, bg='gray', height=self.bar_height,relief='raised',bd=1)
-		#self.title_bar.pack(fill=tk.X, padx=(20,self.screen.width/2), pady=(0,0), ipady=5, side=tk.TOP)
+		self.title_bar = tk.Frame(self.root, height=self.bar_height,relief='raised',bd=1)
 		self.title_bar.pack(fill=tk.X)
 		# Make the window draggable by the title bar
 		self.title_bar.bind("<ButtonPress-1>", self.start_move)
@@ -241,11 +240,6 @@ class WMCtrlTray:
 			r1 = tk.Toplevel(self.root)
 			r1.title("World")
 			r1.geometry("300x200")
-			#menu_bar = tk.Menu(r1)
-			#file_menu = tk.Menu(r1, tearoff=0)
-			#file_menu.add_command(label="New", command=test_new_file)
-			#menu_bar.add_cascade(label="Test",menu=file_menu)
-			#r1.config(menu=menu_bar)
 		#self.root.after_idle(test)
 		#
 		self.create_widgets()
@@ -504,7 +498,6 @@ class WMCtrlTray:
 		#-- Main WindowFrame START
 		self.window_frame = tk.Frame(self.title_bar)
 		self.window_frame.pack(fill=tk.BOTH, side=tk.LEFT, padx=(0))
-		
 		# Always visible: Desktop buttons + All windows combobox
 		self.desktop_buttons = []
 		inactive_bg = self.config.get("inactive_button_bg", "#606060")
@@ -541,7 +534,7 @@ class WMCtrlTray:
 		self.hidden_frame = tk.Frame(self.root)
 		
 		# Create a frame for the 4 desktop comboboxes (horizontal layout)
-		self.combo_row = tk.Frame(self.hidden_frame, bg='gray30')
+		self.combo_row = tk.Frame(self.hidden_frame)
 		self.combo_row.pack(fill=tk.X)
 		
 		self.desktop_comboboxes = []
